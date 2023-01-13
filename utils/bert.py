@@ -1,31 +1,18 @@
-import copy
 import math
 import json
 from attrdict import AttrDict
-import collections
 
 import torch
 from torch import nn
-import torch.nn.functional as F
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
 import numpy as np
 import random
-import itertools
 
 import subprocess
 import matplotlib.pyplot as plt
 import time
 
 #sklearn
-from sklearn.mixture import GaussianMixture as GMM
-from sklearn.cluster import KMeans as KM
-from sklearn.metrics.cluster import adjusted_rand_score
-from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.cluster import DBSCAN
-from sklearn.cluster import SpectralClustering
-from sklearn.cluster import AgglomerativeClustering
-import sys
 # sys.path.append("/home/aca10223gf/workplace/tools/ViennaRNA/lib/python3.6/site-packages/")
 # import RNA
 
@@ -362,11 +349,8 @@ class BertIntermediate(nn.Module):
 class BertOutput(nn.Module):
     def __init__(self, config):
         super(BertOutput, self).__init__()
-
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
-
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
-
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
@@ -455,7 +439,8 @@ class BertModel(nn.Module):
                                           extended_attention_mask,
                                           output_all_encoded_layers, attention_show_flg)
 
-        pooled_output = self.pooler(encoded_layers[-1])
+        pooled_output = self.pooler(encoded_layers[-1])  # 36,120 压缩后的120维不管多长
+        # encoded_l[-1] 36,440,120
 
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
@@ -471,17 +456,17 @@ class BertPreTrainingHeads(nn.Module):
         super(BertPreTrainingHeads, self).__init__()
 
         self.predictions = MaskedWordPredictions(config)
-        config.vocab_size = config.ss_size
+        config.vocab_size = config.ss_size  # 前者是6，后者是8 不同预测任务的词汇量大小，目标种类
         self.predictions_ss = MaskedWordPredictions(config)
 
         self.seq_relationship = nn.Linear(config.hidden_size, 2)
 
     def forward(self, sequence_output, pooled_output):
+        # s_o 36,440,120, p_o 36,120
         prediction_scores = self.predictions(sequence_output)
         prediction_scores_ss = self.predictions_ss(sequence_output)
 
-        seq_relationship_score = self.seq_relationship(
-            pooled_output)
+        seq_relationship_score = self.seq_relationship(pooled_output)  # map to 2d，0或1
 
         return prediction_scores, prediction_scores_ss, seq_relationship_score
 
@@ -552,6 +537,7 @@ class BertForMaskedLM(nn.Module):
             encoded_layers, pooled_output, attention_probs = self.bert(
                 input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False, attention_show_flg=True)
 
+        # 预训练分类头有三种pred, pred_ss, seq_relationship，第三个0/1分类的弃用了
         prediction_scores, prediction_scores_ss, seq_relationship_score = self.cls(encoded_layers, pooled_output)
         return prediction_scores, prediction_scores_ss, encoded_layers
 

@@ -6,41 +6,43 @@ from torchvision import transforms, datasets
 import copy
 import itertools
 from Bio import AlignIO
-from Bio.Alphabet import generic_rna
 
 class DATA:
     def __init__(self, args, config):
         self.max_length = config.max_position_embeddings
-        self.mag = args.mag
+        self.mag = args.mag  # seq复用次数，每次mask不同方案
         self.maskrate = args.maskrate 
         self.batch_size = args.batch
 
     def load_data_MLM_SFP(self, data_sets):
+        # 为MLM及SFP任务装入数据
         families = []
         gapped_seqs = []
         seqs = []
-        for i, data_set in enumerate(data_sets):
+        for i, data_set in enumerate(data_sets):  # datasets是一系列fa文件名，每个是一个family
             for record in SeqIO.parse(data_set, "fasta"):
+                # 转大写，T转U，删-等
                 gapped_seq = str(record.seq).upper()
                 gapped_seq = gapped_seq.replace("T", "U")
-                seq = gapped_seq.replace('-', '')
+                seq = gapped_seq.replace('-', '')  # 删掉对齐符号
                 if set(seq) <= set(['A', 'T', 'G', 'C', 'U']) and len(list(seq)) < self.max_length:
                     seqs.append(seq)
-                    families.append(i)
+                    families.append(i)  # 0, 1, 2, ...
                     gapped_seqs.append(gapped_seq)
-        gapped_seqs = np.tile(onehot_seq(gapped_seqs, self.max_length*5), (self.mag, 1))
+
+        gapped_seqs = np.tile(onehot_seq(gapped_seqs, self.max_length*5), (self.mag, 1))  # 将g_s横向复制mag次，纵向1次
         family = np.tile(np.array(families), self.mag)
         seqs_len = np.tile(np.array([len(i) for i in seqs]), self.mag)   
         k = 1   
-        kmer_seqs = kmer(seqs, k)
+        kmer_seqs = kmer(seqs, k)  # 1-mer序列
         masked_seq, low_seq = mask(kmer_seqs, rate = self.maskrate, mag = self.mag)
-        kmer_dict = make_dict(k)
+        kmer_dict = make_dict(k)  # Check
         swap_kmer_dict = {v: k for k, v in kmer_dict.items()}
         masked_seq = np.array(convert(masked_seq, kmer_dict, self.max_length))
         low_seq = np.array(convert(low_seq, kmer_dict, self.max_length))
 
         transform = transforms.Compose([transforms.ToTensor()])
-        low_seq_1, masked_seq_1, family_1, seqs_len_1 = self.sfp_data(low_seq, masked_seq, family, seqs_len, 0.5)
+        low_seq_1, masked_seq_1, family_1, seqs_len_1 = self.sfp_data(low_seq, masked_seq, family, seqs_len, 0.5)  # Check 如何找到pair
         ds_MLM_SFP = MyDataset("MLM", low_seq, masked_seq, family, seqs_len, low_seq_1, masked_seq_1, family_1, seqs_len_1)
         dl_MLM_SFP = torch.utils.data.DataLoader(ds_MLM_SFP, self.batch_size, shuffle=True)
         return dl_MLM_SFP
@@ -109,7 +111,7 @@ class DATA:
         seqs = []
         SS = []
         for i, data_set in enumerate(data_sets):
-            align = AlignIO.read(data_set, "stockholm", alphabet=generic_rna)
+            align = AlignIO.read(data_set, "stockholm")
             cons_SS = align.column_annotations["secondary_structure"]
             for j, record in enumerate(align):
                 gapped_seq = str(record.seq).upper()
@@ -147,7 +149,7 @@ class DATA:
         seqs = []
         SS = []
         for i, data_set in enumerate(data_sets):
-            align = AlignIO.read(data_set, "stockholm", alphabet=generic_rna)
+            align = AlignIO.read(data_set, "stockholm")
             cons_SS = align.column_annotations["secondary_structure"]
             for j, record in enumerate(align):
                 gapped_seq = str(record.seq).upper()
@@ -259,6 +261,7 @@ class DATA:
 
 
 def base_to_num(seq, pad_max_length):
+    # AUGC分别为2345
     seq = [list(i.translate(str.maketrans({'A': "2", 'U': "3", 'G': "4", 'C': "5"}))) for i in seq]
     seq = [list(map(lambda x : int(x), s)) for s in seq]
     seq = np.array([np.pad(s, ((0, pad_max_length-len(s)))) for s in seq])
@@ -271,6 +274,7 @@ def num_to_base(seq):
 
 
 def mask_seq(seqs, rate = 0.2):
+    # rate参数没有使用？
     c = np.random.rand(*seqs.shape)
     masked_seqs = np.where((c < 0.2) & (seqs != 0) , 1, seqs)
     d = np.random.randint(2, 6, c.shape)
@@ -312,7 +316,7 @@ def mask(seqs, rate = 0.2, mag = 1):
             label.append(copy.copy(s))
             mask_num = int(len(s)*rate)
             all_change_index = np.array(random.sample(range(len(s)), mask_num))
-            mask_index, base_change_index = np.split(all_change_index, [int(all_change_index.size * 0.90)])
+            mask_index, base_change_index = np.split(all_change_index, [int(all_change_index.size * 0.90)])  # 部分mask掉，部分随机替换
 #             index = list(np.sort(random.sample(range(len(s)), mask_num)))
             for i in list(mask_index):
                 s[i] = "MASK"
@@ -344,7 +348,9 @@ def make_dict(k=3):
 
 
 class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, train_type, low_seq, masked_seq, family, seq_len, low_seq_1 = None, masked_seq_1 = None, family_1 = None, seq_len_1 = None, common_index = None, common_index_1 = None, SS = None, SS_1 = None):
+    def __init__(self, train_type, low_seq, masked_seq, family, seq_len, low_seq_1 = None, 
+            masked_seq_1 = None, family_1 = None, seq_len_1 = None, 
+            common_index = None, common_index_1 = None, SS = None, SS_1 = None):
         self.train_type = train_type
         self.data_num = len(low_seq)
         self.low_seq = low_seq
@@ -385,6 +391,7 @@ class MyDataset(torch.utils.data.Dataset):
         # if self.train_type == "SHOW":
         #     out_SS = self.SS
 
+        # 每种训练类型返回什么样的数据形式
         if self.train_type == "MLM":
             return out_low_seq, out_masked_seq, out_family, out_seq_len, out_low_seq_1, out_masked_seq_1, out_family_1, out_seq_len_1
         elif self.train_type == "MUL":

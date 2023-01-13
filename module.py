@@ -2,16 +2,17 @@ import torch
 import alignment_C as Aln_C
 from torch import nn
 import torch.nn.functional as F
-import torch.multiprocessing as mp
 from dataload import  num_to_base
-import time
 import numpy as np
+
+
 class Train_Module:
 	def __init__(self, config):
 		self.device = "cuda" if torch.cuda.is_available() else "cpu"
 		self.config = config
 
 	def train_MLM(self, low_seq_0, masked_seq_0, prediction_scores):
+		# Masked LM训练任务
 		criterion = nn.CrossEntropyLoss()
 		mask = masked_seq_0 - low_seq_0 != 0
 		length_mask = masked_seq_0 != 0

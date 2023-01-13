@@ -1,1 +1,7 @@
 train_testset/*
+__pycache__/
+*egg-info/
+build/
+dist/
+output/
+pretrained/
