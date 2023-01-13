@@ -463,10 +463,10 @@ class BertPreTrainingHeads(nn.Module):
 
     def forward(self, sequence_output, pooled_output):
         # s_o 36,440,120, p_o 36,120
-        prediction_scores = self.predictions(sequence_output)
-        prediction_scores_ss = self.predictions_ss(sequence_output)
+        prediction_scores = self.predictions(sequence_output)  # 120 -> 6
+        prediction_scores_ss = self.predictions_ss(sequence_output)  # 120 -> 8
 
-        seq_relationship_score = self.seq_relationship(pooled_output)  # map to 2d，0或1
+        seq_relationship_score = self.seq_relationship(pooled_output)  # map to 2d，0或1二分类
 
         return prediction_scores, prediction_scores_ss, seq_relationship_score
 

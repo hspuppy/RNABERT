@@ -108,7 +108,7 @@ class TRAIN:
                 mlm_loss = (mlm_loss_0 + mlm_loss_1)/2  # 两部分seq 预测loss的平均
                 mlm_loss = torch.tensor(0.0) if  torch.isnan(mlm_loss) else mlm_loss 
                 mlm_correct = (mlm_correct_0 + mlm_correct_1)/2
-                epoch_mlm_loss += mlm_loss.item() * batch_size  # 为什么要乘batch_size
+                epoch_mlm_loss += mlm_loss.item() * batch_size  # 为什么要乘batch_size，从平均loss得到epoch loss
                 epoch_mlm_correct += mlm_correct
                 if task_type == "MLM":    
                     loss += mlm_loss
@@ -139,8 +139,8 @@ class TRAIN:
                 torch.cuda.empty_cache()
 
             t_epoch_finish = time.time()
-            epoch_mlm_loss = epoch_mlm_loss / len(dl_MLM_SFP.dataset)  # 30
-            epoch_mlm_correct = epoch_mlm_correct / len(dl_MLM_SFP)  # 1
+            epoch_mlm_loss = epoch_mlm_loss / len(dl_MLM_SFP.dataset)  # 30， loss是样本累积再平均
+            epoch_mlm_correct = epoch_mlm_correct / len(dl_MLM_SFP)  # 1, equals number of batches，ACC是批次平均
             epoch_sfp_loss = epoch_sfp_loss  / len(dl_MLM_SFP.dataset)
             epoch_sfp_correct = epoch_sfp_correct / len(dl_MLM_SFP.dataset)
             epoch_mul_loss = epoch_mul_loss

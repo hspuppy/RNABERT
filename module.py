@@ -14,17 +14,17 @@ class Train_Module:
 	def train_MLM(self, low_seq_0, masked_seq_0, prediction_scores):
 		# Masked LM训练任务
 		criterion = nn.CrossEntropyLoss()
-		mask = masked_seq_0 - low_seq_0 != 0
+		mask = masked_seq_0 - low_seq_0 != 0  # 不一样的位置是masked
 		length_mask = masked_seq_0 != 0
-		same_base_mask = torch.bernoulli(torch.ones(mask.shape)*0.05).byte().to(self.device)  
-		mask = mask + same_base_mask
-		index = torch.nonzero(mask).split(1, dim=1)
-		prediction_scores = torch.squeeze(prediction_scores[index])
-		new_low_seq_0 = torch.squeeze(low_seq_0[index])
+		same_base_mask = torch.bernoulli(torch.ones(mask.shape)*0.05).byte().to(self.device)  # 按0.05的概率产生1，和0，噪音？ 
+		mask = mask + same_base_mask  # add noise? 某些位置True + 1会变成2
+		index = torch.nonzero(mask).split(1, dim=1)  # torch.nonzero->每行2d，是一个非0元素的坐标
+		prediction_scores = torch.squeeze(prediction_scores[index])  # squeeze压缩掉所有维度为1的 1266,1,6 -> 1266,6，每行6个数表示类别概率
+		new_low_seq_0 = torch.squeeze(low_seq_0[index])  # 1266，每行一个数表示类别
 		loss = criterion(prediction_scores, new_low_seq_0)     
-		_, preds = torch.max(prediction_scores, 1)
+		_, preds = torch.max(prediction_scores, 1)  # 返回每行最大值和index, 1266
 
-		correct = torch.sum(preds == new_low_seq_0.data).double()/len(new_low_seq_0)
+		correct = torch.sum(preds == new_low_seq_0.data).double()/len(new_low_seq_0)  # Accuracy
 		return loss, correct
 
 	def train_SSL(self, SS, prediction_scores):

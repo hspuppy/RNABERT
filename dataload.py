@@ -30,15 +30,15 @@ class DATA:
                     families.append(i)  # 0, 1, 2, ...
                     gapped_seqs.append(gapped_seq)
 
-        gapped_seqs = np.tile(onehot_seq(gapped_seqs, self.max_length*5), (self.mag, 1))  # 将g_s横向复制mag次，纵向1次
-        family = np.tile(np.array(families), self.mag)
+        gapped_seqs = np.tile(onehot_seq(gapped_seqs, self.max_length*5), (self.mag, 1))  # 将g_s横向扩充5倍440x5，纵向重复mag次, 30x2200
+        family = np.tile(np.array(families), self.mag)  # 30
         seqs_len = np.tile(np.array([len(i) for i in seqs]), self.mag)   
         k = 1   
-        kmer_seqs = kmer(seqs, k)  # 1-mer序列
-        masked_seq, low_seq = mask(kmer_seqs, rate = self.maskrate, mag = self.mag)
-        kmer_dict = make_dict(k)  # Check
-        swap_kmer_dict = {v: k for k, v in kmer_dict.items()}
-        masked_seq = np.array(convert(masked_seq, kmer_dict, self.max_length))
+        kmer_seqs = kmer(seqs, k)  # 1-mer序列，单碱基拆开，['A','U',...]
+        masked_seq, low_seq = mask(kmer_seqs, rate = self.maskrate, mag = self.mag)  # 某些位置MASK某些位置随机换，low_seq=kmer_seqs
+        kmer_dict = make_dict(k)  # MASK+碱基 -> num
+        swap_kmer_dict = {v: k for k, v in kmer_dict.items()}  # num -> base
+        masked_seq = np.array(convert(masked_seq, kmer_dict, self.max_length))  # char convert to number
         low_seq = np.array(convert(low_seq, kmer_dict, self.max_length))
 
         transform = transforms.Compose([transforms.ToTensor()])
@@ -215,6 +215,7 @@ class DATA:
         return seqs, low_seq, ds_CLU, dl_CLU 
 
     def sfp_data(self, low_seq, masked_seq, family, seqs_len, family_ratio = 0.5, gapped_seqs = None, SS = None):
+        # 10*3个样本，给每个挑一个pair，有一定概率挑到同family的，不会挑到自己，如果没得可选的才选自己
         new_index = []
         for i in range(len(family)):
             if random.random() >= family_ratio:
