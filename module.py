@@ -56,7 +56,7 @@ class Train_Module:
 		return loss, correct
 
 	def train_MUL(self, z0_list, z1_list, common_index_0, common_index_1, seq_len_0, seq_len_1):   
-		bert_scores, _ = self.match(z0_list, z1_list)
+		bert_scores, _ = self.match(z0_list, z1_list)  # len*len的得分矩阵
 		loss = 0.0
 		for i, bert_score in enumerate(bert_scores):
 			loss += self.structural_learning(bert_score, common_index_0[i], seq_len_0[i], common_index_1[i], seq_len_1[i])
@@ -161,6 +161,7 @@ class Train_Module:
 		return match_scores, logits
 
 	def em(self, h, lengths):
+		# 取每个序列的embedding，padding到max len的部分不要
 		# get representations with different lengths from the collated single matrix
 		e = [None] * len(lengths)
 		for i in range(len(lengths)):

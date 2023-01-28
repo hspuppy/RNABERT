@@ -131,7 +131,7 @@ class TRAIN:
                     mul_loss = self.module.train_MUL(z0_list, z1_list, common_index_0, common_index_1, seq_len_0, seq_len_1)
                     mul_loss = torch.tensor(0.0) if  torch.isnan(mul_loss) else mul_loss 
                     epoch_mul_loss += mul_loss.item()
-                    loss +=  mul_loss
+                    loss +=  mul_loss  # MUL任务就只有mul loss被优化，没有优化MLM loss，但是记录了
 
                 optimizer.zero_grad()
                 loss.backward()
