@@ -17,6 +17,7 @@ import torch
 from dataload import convert, kmer, make_dict, mask
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.trainer.trainer import Trainer
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from utils.bert import BertModel, BertPreTrainingHeads, get_config
 
@@ -50,6 +51,32 @@ class RNASeqMLMDataset(Dataset):
         return {
             'seq': seq_ids, 
             'masked_seq': masked_seq_ids
+        }
+
+    def __len__(self):
+        return len(self.data)
+
+class RNASeqScoreDataset(Dataset):
+    """RNA seq and a score or a catigorical label"""
+    def __init__(self, dataframe:pd.DataFrame):
+        # TODO customized column names for seq and score
+        assert 'seq' in dataframe.columns and 'score' in dataframe.columns
+        self.data = dataframe
+        self.max_length = 25
+
+    def __getitem__(self, index):
+        seq = self.data.iloc[index]['seq']
+        score = self.data.iloc[index]['score']
+        assert set(seq) <= set(['A', 'T', 'G', 'C', 'U'])
+        seq = seq.upper().replace('T', 'U')
+        k = 1
+        kmer_seqs = kmer([seq], k)  # 1-mer序列，单碱基拆开，['A','U',...]
+        kmer_dict = make_dict(k)  # MASK+碱基 -> num
+        seq_ids = np.array(convert(kmer_seqs, kmer_dict, self.max_length))[0]
+
+        return {
+            'seq': seq_ids, 
+            'score': score
         }
 
     def __len__(self):
@@ -153,6 +180,104 @@ class RNABertForMLM(pl.LightningModule):
         return parser
 
 
+class RNABertForRegression(pl.LightningModule):
+    def __init__(self, config):
+        super().__init__()
+        # self.save_hyperparameters()
+        # logger.info(f'hyperparameters: \n{self.hparams}')
+        self.config = config
+        self.bert = BertModel(config)
+        self.bert_output_dim = 120  # TODO: config this
+        self.reg = torch.nn.Linear(self.bert_output_dim, 1)
+        self.double()
+
+    def load_bert_pretrained_weights(self, states):
+        self.bert.load_state_dict(states)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, attention_show_flg=False):
+        encoded_layers, pooled_output = self.bert(
+            input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False, attention_show_flg=False)
+        # e_l 8x25x120; p_o 8x120
+        reg_score = self.reg(pooled_output)  # 8x1
+        return reg_score
+
+    def train_dataloader(self):
+        data = pd.read_csv('./sample/IS_train.csv', usecols=['seq','score'])
+        ds = RNASeqScoreDataset(data)
+        return DataLoader(ds, 8, num_workers=4, shuffle=True)  # TODO: batch size from config
+
+    def val_dataloader(self):
+        data = pd.read_csv('./sample/IS_valid.csv', usecols=['seq','score'])
+        ds = RNASeqScoreDataset(data)
+        return DataLoader(ds, 8, num_workers=4, shuffle=False)  # TODO: batch size from config
+
+    def test_dataloader(self):
+        data = pd.read_csv('./sample/IS_test.csv', usecols=['seq','score'])
+        ds = RNASeqScoreDataset(data)
+        return DataLoader(ds, 8, num_workers=4, shuffle=False)  # TODO: batch size from config
+
+    def training_step(self, batch, batch_idx):
+        seq, score = batch['seq'], batch['score']
+        pred_score = self.forward(seq)
+        loss = F.mse_loss(pred_score.squeeze(-1), score)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        seq, score = batch['seq'], batch['score']
+        pred_score = self.forward(seq)
+        loss = F.mse_loss(pred_score.squeeze(-1), score)
+        self.log('val_loss', loss, prog_bar=True)
+        return score, pred_score
+
+    def validation_epoch_end(self, outputs):
+        # collect all outputs and calculate PCC
+        from scipy.stats import pearsonr
+        x = torch.concat([o[0] for o in outputs]).cpu()
+        y = torch.concat([o[1] for o in outputs]).squeeze(-1).cpu()
+        pcc, pvalue = pearsonr(x, y)
+        self.log('val_pcc', pcc, prog_bar=True)
+        return
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)  # TODO: config
+        return optimizer
+
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument('--learning_rate', default=3e-4, type=float)
+        parser.add_argument('--batch_size', type=int, default=32)
+        parser.add_argument('--early_stop', type=str, default='val_loss')
+        # parser.add_argument('--val_check_interval', type=int, default=10)
+        return parser
+
+
+def train_reg_is():
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser = RNABertForRegression.add_model_specific_args(parser)
+    parser = Trainer.add_argparse_args(parser)
+    args = parser.parse_args()
+    config = get_config(file_path = "./RNA_bert_config.json") 
+    config.hidden_size = config.num_attention_heads * config.multiple
+
+    model = RNABertForRegression(config)
+    # with pretrained parameters, load only BERT part
+    states = torch.load('./pretrained/bert_mul_2.pth')
+    new_states = OrderedDict([(k.replace('module.bert.', ''), v) for (k,v) in states.items() if k.startswith('module.bert.')])
+    model.load_bert_pretrained_weights(new_states)
+    # print(model)
+    # trainer = Trainer.from_argparse_args(args, gpus=1, max_epochs=20) 
+    early_stopping = EarlyStopping('val_loss')
+    trainer = Trainer.from_argparse_args(
+        args, 
+        callbacks=[early_stopping], 
+        # precision=16,
+        gpus=1, 
+        max_epochs=100)
+    trainer.fit(model) 
+
+
 def train_mlm():
     # loading dataframes and tokenize
     from argparse import ArgumentParser
@@ -181,18 +306,7 @@ def train_mlm():
     trainer.fit(model) 
 
 
-def test():
-    # model = BertClassifier.load_from_checkpoint('./saved_models/distilbert/model.pth')
-    # model.eval()
-    # print(model)
-    # trainer = Trainer(gpus=1)
-    # result = trainer.test(model)
-    # print(result)
-    pass
-
-
 if __name__ == '__main__':
-    # process_data()
-    train_mlm()
-    # test()
+    # train_mlm()
+    train_reg_is()
 
